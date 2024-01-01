@@ -26,9 +26,12 @@ def create_jsonl_file():
             file.write(json.dumps(json_object) + '\n')
 
 
-def retrieve_top_docs(query, k=10):
+def retrieve_top_docs(query, k=10, tokenizer=None):
     global searcher
-    hits = searcher.search(query, k=k)
+    try:
+        hits = searcher.search(query, k=k)
+    except:
+        hits = searcher.search(truncate_to_max_tokens(query, tokenizer, max_tokens=495), k=k)
     return [hits[i].docid for i in range(k)]
 
 
@@ -69,14 +72,35 @@ def truncate_to_max_tokens(text, tokenizer, max_tokens=512):
 if __name__ == '__main__':
     cp = 'llama13btest'
 
+    # df = pd.read_csv(f'/lv_local/home/niv.b/llama/TT_input/feature_data_{cp}_new.csv').astype(str)
+    # df_F = pd.read_csv(f'/lv_local/home/niv.b/llama/TT_input/feature_data_{cp}_new_F.csv').astype(str)
+    # asrc_scores = pd.read_csv(f'/lv_local/home/niv.b/llama/TT_input/asrc_f_scores.csv').astype(str)
+    #
+    # df = df.merge(pd.concat([asrc_scores,df_F])[['docno','faithfulness','EF@10']].dropna(), on=['docno'], how='left', suffixes=('', '_y')).drop_duplicates()
+    #
+    # df.to_csv(f'/lv_local/home/niv.b/llama/TT_input/feature_data_{cp}_new_F.csv', index=False)
+
+    asrc_scores = pd.read_csv(f'/lv_local/home/niv.b/llama/TT_input/asrc_f_scores.csv').astype(str)
+
     if os.path.exists(f'/lv_local/home/niv.b/llama/TT_input/feature_data_{cp}_new_F.csv'):
         df = pd.read_csv(f'/lv_local/home/niv.b/llama/TT_input/feature_data_{cp}_new_F.csv').astype(str)
     else:
         df = pd.read_csv(f'/lv_local/home/niv.b/llama/TT_input/feature_data_{cp}_new.csv').astype(str)
-        df = df[df.creator != 'creator']
-        df['faithfulness'] = np.nan
+        df = df.merge(asrc_scores[['docno', 'faithfulness', 'EF@10']], on=['docno'], how='left', suffixes=('', '_y'))
 
+        # df = df[df.creator != 'creator'] # bot calculations!
+
+        # df = df[df.creator == 'creator'].drop_duplicates("docno") # student calculations!
+
+        # df['faithfulness'] = "nan"
+
+
+    df = df.drop(['faithfulness_y','EF@10_y'], axis=1)
     nan_indices = df[df.faithfulness == 'nan'].index.tolist()
+    if len(nan_indices) == 0:
+        print("all done!")
+        df.to_csv(f'/lv_local/home/niv.b/llama/TT_input/feature_data_{cp}_new_F.csv', index=False)
+        exit()
     print("remaining: ",len(nan_indices))
 
     text_df = pd.read_csv(f'/lv_local/home/niv.b/llama/TT_input/bot_followup_{cp}.csv').astype(str)
@@ -96,14 +120,20 @@ if __name__ == '__main__':
             continue
         try:
             k = 10
-            text = text_df[text_df.docno == row.docno].text.values[0]
+            text = text_df[text_df.docno == row.docno].text.values[0] # bot calculations!
+
+            # try: # student calculations!
+            #     text = greg_df[greg_df.new_docno == row.docno].current_document.values[0]
+            # except:
+            #     text = greg_df[greg_df.new_docno == row.docno.replace("-"+row.docno.split("-")[2]+"-","-0" + row.docno.split("-")[2] + "-")].current_document.values[0]
+
             text = truncate_to_max_tokens(text, tokenizer, max_tokens=512)
             try:
                 prev_text = greg_df[greg_df.new_docno == row.previous_docno_str].current_document.values[0]
             except:
                 prev_text = greg_df[greg_df.new_docno == row.previous_docno_str.replace("-"+row.previous_docno_str.split("-")[2]+"-","-0" + row.previous_docno_str.split("-")[2] + "-")].current_document.values[0]
 
-            top_docs = retrieve_top_docs(text, k=k)
+            top_docs = retrieve_top_docs(text, k=k, tokenizer=tokenizer)
             top_docs = [greg_df[greg_df.docno == docno].current_document.values[0] for docno in top_docs]
 
             with torch.no_grad():
@@ -117,7 +147,7 @@ if __name__ == '__main__':
                 df.loc[idx, f'EF@{k}'] = EF
                 df.loc[idx, 'faithfulness'] = faithfulness
                 counter += 1
-                if counter % 5 == 0:
+                if counter % 10 == 0 or counter == len(nan_indices) - error_counter:
                     print(f"finished: {counter}/{len(nan_indices)}, errors: {error_counter}")
                     df.to_csv(f'/lv_local/home/niv.b/llama/TT_input/feature_data_{cp}_new_F.csv', index=False)
         except Exception as e:

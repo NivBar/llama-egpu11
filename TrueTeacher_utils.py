@@ -301,21 +301,32 @@ def get_cache_size(cache):
 # REMOTE
 remote_host = 'iegpu11.iem.technion.ac.il'
 username = 'niv.b'
-password = 'Xhxntkyfbhui4'
 remote_pickle_path = f'/lv_local/home/niv.b/llama/{cache_file}'
+if socket.gethostname() != remote_host:
+    password = input(f"Enter the password for {username}@{remote_host}: ")
 
 
 def read_pickle_from_remote(remote_host, remote_path, username, password):
     ssh = paramiko.SSHClient()
+    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     ssh.load_system_host_keys()
     ssh.connect(remote_host, username=username, password=password)
 
     with SCPClient(ssh.get_transport()) as scp:
         with io.BytesIO() as file_obj:
-            scp.getfo(remote_path, file_obj)
-            file_obj.seek(0)
+            # Create a temporary file on disk
+            with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+                # Download the remote pickle file to the temporary file
+                scp.get(remote_path, tmp_file.name)
+
+            # Read the temporary file into the in-memory BytesIO object
+            with open(tmp_file.name, 'rb') as f:
+                file_obj.write(f.read())
+                file_obj.seek(0)  # Move cursor to the start of the file for reading
+
+            # Load the pickle data from the in-memory BytesIO object
             data = pickle.load(file_obj)
-            print(f"Cache loaded REMOTELY from file - {cache_file} (size - {get_cache_size(cache)} bytes)")
+            print(f"Cache loaded REMOTELY from file - {remote_path} (size - {len(data)} bytes)")
 
     ssh.close()
     return data

@@ -19,29 +19,27 @@ from scp import SCPClient
 import pickle
 import io
 import socket
+import tempfile
 
 warnings.filterwarnings("ignore")
 
-# faiss_tokenizer = DPRQuestionEncoderTokenizer.from_pretrained('facebook/dpr-question_encoder-multiset-base')
-# searcher = FaissSearcher(
-#     # './pyserini_output_online', # TOMMY
-#     './pyserini_output_tommy_4_max',
-#     'facebook/dpr-question_encoder-multiset-base'
-# )
-
 embedding_model = 'intfloat/e5-base'
-index_path = "/lv_local/home/niv.b/llama/pyserini_output_tommy_4_max"
+rel_round = 6
+index_path = f"/lv_local/home/niv.b/llama/pyserini_output_tommy_{rel_round}_max"
 # faiss_tokenizer = AutoTokenizer.from_pretrained(embedding_model)
 faiss_searcher = FaissSearcher(index_path, embedding_model)
 lucene_searcher = LuceneSearcher(index_path + "_sparse")
 
 data_dict = {}
-with open(index_path + "/tommy_data_4_max.jsonl", 'r') as file:
+with open(index_path + f"/tommy_data_{rel_round}_max.jsonl", 'r') as file:
     for line in file:
         # Parse each line as a JSON object
         entry = json.loads(line)
         # Use 'id' as the key and 'contents' as the value
-        data_dict[entry['id']] = entry['contents']
+        try:
+            data_dict[entry['id']] = entry['contents']
+        except:
+            data_dict[entry['id']] = entry['text']
 
 names_otn = {key: key.replace('ROUND-', '').replace('00', '0') + '-creator' for key in data_dict.keys()}
 
@@ -51,8 +49,10 @@ model_path = 'google/t5_11b_trueteacher_and_anli'
 tokenizer = T5Tokenizer.from_pretrained(model_path)
 model = T5ForConditionalGeneration.from_pretrained(model_path, device_map="auto")
 model.eval()
+# model = "model"
 
 cache_file = 'cache_offline.pkl'
+cache_usage = 0
 
 
 def init_model():
@@ -204,6 +204,7 @@ def create_CF_ref_dict(df):
 
 
 def calculate_metrics(top_docs, sentences, cache):
+    global cache_usage
     """Calculate the metrics (cf_vals, cf_ref_vals, norm_vals) for a list of top documents using a cache to avoid redundant calls."""
     cf_vals, cf_ref_vals, norm_vals = [], [], []
     for doc in top_docs:
@@ -216,6 +217,8 @@ def calculate_metrics(top_docs, sentences, cache):
             # Check cache for the result before calling get_prob_one_sided
             if sentence not in cache[doc]:
                 cache[doc][sentence] = get_prob_one_sided(doc, sentence)
+            else:
+                cache_usage += 1
             vals.append(cache[doc][sentence])
 
         bool_vals = [v >= 0.5 for v in vals]
@@ -282,9 +285,11 @@ def load_cache():
 
 # Function to save the cache to a pickle file
 def save_cache(cache):
+    global cache_usage
     with open(cache_file, 'wb') as f:
         pickle.dump(cache, f)
         print(f"cache size changed - {get_cache_size(cache)} bytes")
+        print(f"cache used {cache_usage} times!")
 
 
 def get_cache_size(cache):
@@ -298,50 +303,50 @@ def get_cache_size(cache):
     return total_size
 
 
-# REMOTE
-remote_host = 'iegpu11.iem.technion.ac.il'
-username = 'niv.b'
-remote_pickle_path = f'/lv_local/home/niv.b/llama/{cache_file}'
-if socket.gethostname() != remote_host:
-    password = input(f"Enter the password for {username}@{remote_host}: ")
-
-
-def read_pickle_from_remote(remote_host, remote_path, username, password):
-    ssh = paramiko.SSHClient()
-    ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    ssh.load_system_host_keys()
-    ssh.connect(remote_host, username=username, password=password)
-
-    with SCPClient(ssh.get_transport()) as scp:
-        with io.BytesIO() as file_obj:
-            # Create a temporary file on disk
-            with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
-                # Download the remote pickle file to the temporary file
-                scp.get(remote_path, tmp_file.name)
-
-            # Read the temporary file into the in-memory BytesIO object
-            with open(tmp_file.name, 'rb') as f:
-                file_obj.write(f.read())
-                file_obj.seek(0)  # Move cursor to the start of the file for reading
-
-            # Load the pickle data from the in-memory BytesIO object
-            data = pickle.load(file_obj)
-            print(f"Cache loaded REMOTELY from file - {remote_path} (size - {len(data)} bytes)")
-
-    ssh.close()
-    return data
-
-
-def write_pickle_to_remote(data, remote_host, remote_path, username, password):
-    ssh = paramiko.SSHClient()
-    ssh.load_system_host_keys()
-    ssh.connect(remote_host, username=username, password=password)
-
-    with SCPClient(ssh.get_transport()) as scp:
-        with io.BytesIO() as file_obj:
-            pickle.dump(data, file_obj)
-            file_obj.seek(0)
-            scp.putfo(file_obj, remote_path)
-            print(f"cache size changed REMOTELY - {get_cache_size(cache)} bytes")
-
-    ssh.close()
+# # REMOTE
+# remote_host = 'iegpu11.iem.technion.ac.il'
+# username = 'niv.b'
+# remote_pickle_path = f'/lv_local/home/niv.b/llama/{cache_file}'
+# if socket.gethostname() != remote_host:
+#     password = input(f"Enter the password for {username}@{remote_host}: ")
+#
+#
+# def read_pickle_from_remote(remote_host, remote_path, username, password):
+#     ssh = paramiko.SSHClient()
+#     ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+#     ssh.load_system_host_keys()
+#     ssh.connect(remote_host, username=username, password=password)
+#
+#     with SCPClient(ssh.get_transport()) as scp:
+#         with io.BytesIO() as file_obj:
+#             # Create a temporary file on disk
+#             with tempfile.NamedTemporaryFile(delete=False) as tmp_file:
+#                 # Download the remote pickle file to the temporary file
+#                 scp.get(remote_path, tmp_file.name)
+#
+#             # Read the temporary file into the in-memory BytesIO object
+#             with open(tmp_file.name, 'rb') as f:
+#                 file_obj.write(f.read())
+#                 file_obj.seek(0)  # Move cursor to the start of the file for reading
+#
+#             # Load the pickle data from the in-memory BytesIO object
+#             data = pickle.load(file_obj)
+#             print(f"Cache loaded REMOTELY from file - {remote_path} (size - {len(data)} bytes)")
+#
+#     ssh.close()
+#     return data
+#
+#
+# def write_pickle_to_remote(data, remote_host, remote_path, username, password):
+#     ssh = paramiko.SSHClient()
+#     ssh.load_system_host_keys()
+#     ssh.connect(remote_host, username=username, password=password)
+#
+#     with SCPClient(ssh.get_transport()) as scp:
+#         with io.BytesIO() as file_obj:
+#             pickle.dump(data, file_obj)
+#             file_obj.seek(0)
+#             scp.putfo(file_obj, remote_path)
+#             print(f"cache size changed REMOTELY - {get_cache_size(cache)} bytes")
+#
+#     ssh.close()

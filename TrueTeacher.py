@@ -21,7 +21,7 @@ if __name__ == '__main__':
     # cp = 'online'
     # online = True
 
-    cp = 'tommy4@F200'
+    cp = f'tommy{rel_round}@F50'
     online = False
     EF_debug = True
     print(f"starting {cp} analysis...")
@@ -38,10 +38,14 @@ if __name__ == '__main__':
 
     if os.path.exists(f'/lv_local/home/niv.b/llama/TT_input/feature_data_{cp}_new_F.csv'):
         df = pd.read_csv(f'/lv_local/home/niv.b/llama/TT_input/feature_data_{cp}_new_F.csv').astype(str)
+        # TODO: drop it?
+        df = df[df.creator != 'creator']
 
     else:
         if os.path.exists(f'/lv_local/home/niv.b/llama/TT_input/feature_data_{cp}_new.csv'):
             df = pd.read_csv(f'/lv_local/home/niv.b/llama/TT_input/feature_data_{cp}_new.csv').astype(str)
+            # TODO: drop it?
+            df = df[df.creator != 'creator']
             # df = df.merge(asrc_scores, on=['docno'], how='left', #TOMMY
             #               suffixes=('', '_y')).astype(str)
             # df.username = cp # TOMMY
@@ -119,20 +123,6 @@ if __name__ == '__main__':
         text_df = text_df.astype(str).merge(df[['query_id', 'creator', 'username', 'docno']].astype(str),
                                             on=['query_id', 'creator', 'username'],
                                             how='left', suffixes=('', '_y'))
-        x = 1
-
-    # # long texts handling
-    # long_df = text_df[text_df['text'].apply(lambda x: len(x.split()) > 150)]
-    # long_df['length'] = long_df['text'].apply(lambda x: len(x.split()))
-    # long_df['text'] = long_df['text'].apply(trim_complete_sentences)
-    # long_df['length_post_edit'] = long_df['text'].apply(lambda x: len(x.split()))
-    #
-    # text_df['text'] = text_df['text'].apply(lambda x: trim_complete_sentences(x) if len(x.split()) > 150 else x)
-    #
-    # assert text_df['text'].apply(lambda x: len(x.split())).max() <= 150
-    #
-    # # TODO: remove long fix-up!!!
-    # df.loc[df.docno.isin(long_df.docno.tolist()), eval_measures] = 'nan'
 
     if not online:
         greg_df = pd.read_csv(f'/lv_local/home/niv.b/llama/tommy_data.csv').astype(str)
@@ -140,11 +130,6 @@ if __name__ == '__main__':
         greg_df = pd.read_csv(f'/lv_local/home/niv.b/llama/full_online_data.csv').astype(str)
     greg_df['new_docno'] = greg_df.apply(lambda row: row.docno.split('ROUND-')[1].replace("00", "0") + "-creator",
                                          axis=1)
-
-    # # round_no, query_id, creator, username, text, prompt
-    # greg_df = greg_df[['round_no', 'query_id', 'username', 'current_document','new_docno']].rename({'new_docno':'docno', 'current_document':'text'}, axis=1)
-    # greg_df['creator'] = 'creator'
-    # greg_df.to_csv(f'/lv_local/home/niv.b/llama/TT_input/bot_followup_{cp}.csv', index=False)
 
     if cp == 'asrc':
         cf_ref_dict = create_CF_ref_dict(df)
@@ -164,10 +149,11 @@ if __name__ == '__main__':
 
     counter = 0
     error_counter = 0
-    if socket.gethostname() != remote_host:
-        cache = read_pickle_from_remote(remote_host, remote_pickle_path, username, password)
-    else:
-        cache = load_cache()
+    # if socket.gethostname() != remote_host:
+    #     cache = read_pickle_from_remote(remote_host, remote_pickle_path, username, password)
+    # else:
+    #     cache = load_cache()
+    cache = load_cache()
     cache_size = get_cache_size(cache)
     for idx, row in tqdm(df.iterrows(), total=df.shape[0]):
         if row.round_no == '1':
@@ -298,10 +284,6 @@ if __name__ == '__main__':
                     store_results(df, idx, metrics_dense, "dense", k, k // 2)
                     store_results(df, idx, metrics_sparse, "sparse", k, k // 2)
 
-                # if row['TF_BDM'] == 'nan':
-                #     TF_BDM = get_prob_mean(text, winner_text)
-                #     df.loc[idx, 'TF_BDM'] = TF_BDM
-
                 if row['ref_pos_sparse'] == 'nan' or row['ref_pos_dense'] == 'nan' or EF_debug:
                     top_docs_dense_docnos, top_docs_sparse_docnos, _, _ = retrieve_top_docs(text, k=k,
                                                                                             round_no=row.round_no,
@@ -338,11 +320,11 @@ if __name__ == '__main__':
                     x = 1
 
                 if cache_size != get_cache_size(cache):
-                    if socket.gethostname() == remote_host:
-                        save_cache(cache)
-                    else:
-                        write_pickle_to_remote(data, remote_host, remote_pickle_path, username, password)
-
+                    # if socket.gethostname() == remote_host:
+                    #     save_cache(cache)
+                    # else:
+                    #     write_pickle_to_remote(data, remote_host, remote_pickle_path, username, password)
+                    save_cache(cache)
                     cache_size = get_cache_size(cache)
 
                 # if row['CF@1'] == 'nan' or row['CF@1_values'] == 'nan' or EF_debug:
@@ -422,6 +404,9 @@ if __name__ == '__main__':
                     df[columns_to_convert] = df[columns_to_convert].astype(float)
                     # mean_df = df.groupby(['temp', 'username'])[cols_to_convert].mean().reset_index()
                     mean_df = df.groupby(['username'])[columns_to_convert].mean().reset_index()
+
+                    if counter == len(nan_indices) - error_counter:
+                        save_cache(cache)
                     # print(mean_df) #EF_DEBUG
 
 
